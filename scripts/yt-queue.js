@@ -24,7 +24,7 @@ registerPlugin({
     var startTimeout = (config.startTimeout || 25) * 1000;
     var download = Number(config.download) === 1;
 
-    var queue = [];          // {id, title, channel, duration}
+    var queue = [];          // {id, title, channel}
     var results = {};        // client uid -> last search results
     var current = null;
     var startTimer = null;
@@ -38,19 +38,6 @@ registerPlugin({
         if (ev.mode === 1 && ev.client) ev.client.chat(text);
         else if (ev.channel) ev.channel.chat(text);
         else if (ev.client) ev.client.chat(text);
-    }
-
-    function fmt(ms) {
-        var s = Math.round(ms / 1000), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
-        s = s % 60;
-        var p = function (n) { return n < 10 ? '0' + n : '' + n; };
-        return (h ? h + ':' + p(m) : m) + ':' + p(s);
-    }
-
-    function isoToMs(iso) {
-        var m = /PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/.exec(iso || '');
-        if (!m) return 0;
-        return ((+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0)) * 1000;
     }
 
     function api(path, params, cb) {
@@ -69,19 +56,6 @@ registerPlugin({
             }
             try { cb(null, JSON.parse(res.data.toString())); }
             catch (e) { cb('Bad API response'); }
-        });
-    }
-
-    // fill durations for a list of items (max 50 ids per call)
-    function addDurations(items, cb) {
-        var ids = items.map(function (i) { return i.id; }).join(',');
-        api('videos', { part: 'contentDetails', id: ids }, function (err, data) {
-            if (!err) {
-                var map = {};
-                data.items.forEach(function (v) { map[v.id] = isoToMs(v.contentDetails.duration); });
-                items.forEach(function (i) { i.duration = map[i.id] || 0; });
-            }
-            cb(items);
         });
     }
 
@@ -158,16 +132,14 @@ registerPlugin({
         api('search', { part: 'snippet', type: 'video', maxResults: 5, q: term }, function (err, data) {
             if (err) return reply(ev, err);
             var items = data.items.map(function (i) {
-                return { id: i.id.videoId, title: i.snippet.title, channel: i.snippet.channelTitle, duration: 0 };
+                return { id: i.id.videoId, title: i.snippet.title, channel: i.snippet.channelTitle };
             });
             if (!items.length) return reply(ev, 'Nothing found.');
-            addDurations(items, function (items) {
-                results[ev.client.uid()] = items;
-                var lines = items.map(function (i, n) {
-                    return '[b]' + (n + 1) + '[/b] ' + i.title + ' - ' + i.channel + ' (' + fmt(i.duration) + ')';
-                });
-                reply(ev, '\n' + lines.join('\n') + '\nPick with ' + prefix + '1 - ' + prefix + items.length);
+            results[ev.client.uid()] = items;
+            var lines = items.map(function (i, n) {
+                return '[b]' + (n + 1) + '[/b] ' + i.title + ' - ' + i.channel;
             });
+            reply(ev, '\n' + lines.join('\n') + '\nPick with ' + prefix + '1 - ' + prefix + items.length);
         });
     }
 
@@ -183,7 +155,7 @@ registerPlugin({
                 data.items.forEach(function (i) {
                     var s = i.snippet;
                     if (!s.resourceId || s.title === 'Private video' || s.title === 'Deleted video') return;
-                    items.push({ id: s.resourceId.videoId, title: s.title, channel: s.videoOwnerChannelTitle || '', duration: 0 });
+                    items.push({ id: s.resourceId.videoId, title: s.title, channel: s.videoOwnerChannelTitle || '' });
                 });
                 if (data.nextPageToken && items.length < maxPlaylist) return page(data.nextPageToken);
                 items = items.slice(0, maxPlaylist);
@@ -197,10 +169,10 @@ registerPlugin({
     function addUrl(ev, arg) {
         var m = /(?:v=|youtu\.be\/)([\w-]{11})/.exec(arg);
         if (!m) return reply(ev, 'No video id found.');
-        api('videos', { part: 'snippet,contentDetails', id: m[1] }, function (err, data) {
+        api('videos', { part: 'snippet', id: m[1] }, function (err, data) {
             if (err || !data.items.length) return reply(ev, err || 'Video not found.');
             var v = data.items[0];
-            enqueue([{ id: v.id, title: v.snippet.title, channel: v.snippet.channelTitle, duration: isoToMs(v.contentDetails.duration) }]);
+            enqueue([{ id: v.id, title: v.snippet.title, channel: v.snippet.channelTitle }]);
             reply(ev, 'Queued: ' + v.snippet.title);
         });
     }
@@ -228,7 +200,7 @@ registerPlugin({
     function showQueue(ev) {
         var lines = [];
         if (current) lines.push('Now: ' + current.title);
-        queue.slice(0, 15).forEach(function (i, n) { lines.push((n + 1) + '. ' + i.title + ' (' + fmt(i.duration) + ')'); });
+        queue.slice(0, 15).forEach(function (i, n) { lines.push((n + 1) + '. ' + i.title); });
         if (queue.length > 15) lines.push('... +' + (queue.length - 15) + ' more');
         reply(ev, lines.length ? '\n' + lines.join('\n') : 'Queue empty.');
     }
@@ -273,7 +245,7 @@ registerPlugin({
                 stopping = true; queue = []; current = null; clearTimer(); media.stop();
                 return;
             case 'np':
-                return reply(ev, current ? 'Now: ' + current.title + ' - ' + current.channel + ' (' + fmt(current.duration) + ') ' + videoUrl(current.id) : 'Nothing playing.');
+                return reply(ev, current ? 'Now: ' + current.title + ' - ' + current.channel + ' ' + videoUrl(current.id) : 'Nothing playing.');
         }
     });
 });
